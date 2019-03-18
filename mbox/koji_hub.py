@@ -69,7 +69,7 @@ class KojiHub(BaseComponent):
 
     def _ensure_schema(self):
         self.logger.debug("Ensuring koji schema")
-        output = self.state.oc_exec(
+        (retcode, stdout, stderr) = self.state.oc_exec(
             self.hub_pod_name,
             "PGPASSWORD=%s psql -h %s koji %s "
             "</usr/share/doc/koji*/docs/schema.sql" % (
@@ -78,67 +78,73 @@ class KojiHub(BaseComponent):
                 self.state.database.username,
             ),
         )
-        if "already exists" in output.stderr:
+        if "already exists" in stderr:
             self.logger.debug("Schema already existed")
             return False
         self.logger.debug("Retcode: %d, stdout: %s, stderr: %s",
-                          output.returncode, output.stdout, output.stderr)
-        output.check_returncode()
+                          retcode, stdout, stderr)
+        if retcode != 0:
+            raise RuntimeError("Error running command")
         self.logger.info("Created koji schema")
         return True
 
     def _ensure_admin_user_exists(self):
         self.logger.debug("Ensuring admin user")
-        res = self.state.database.run_query(
+        (retcode, _, stderr) = self.state.database.run_query(
             "koji",
             "insert into users (name, status, usertype) values "
             "('%s', 0, 0);" % self.state.config.get('koji_hub',
                                                     'admin_username'),
         )
-        if "duplicate key value violates unique constraint" in res.stderr:
+        if "duplicate key value violates unique constraint" in stderr:
             self.logger.debug("Admin user existed")
             return False
-        res.check_returncode()
+        if retcode != 0:
+            raise RuntimeError("Error running command")
         self.logger.info("Admin user created")
         return True
 
     def _ensure_admin_permissions(self):
         self.logger.debug("Ensuring admin permissions")
-        res = self.state.database.run_query(
+        (retcode, _, stderr) = self.state.database.run_query(
             "koji",
             "insert into user_perms (user_id, perm_id, creator_id) "
             "values (1, 1, 1);",
         )
-        if "duplicate key value violates unique constraint" in res.stderr:
+        if "duplicate key value violates unique constraint" in stderr:
             self.logger.debug("Admin permissions existed")
             return False
-        res.check_returncode()
+        if retcode != 0:
+            raise RuntimeError("Error running command")
         self.logger.info("Admin permissions created")
         return True
 
     def ensure_builder_user(self, CN, *arches):
         self.logger.debug("Ensuring builder %s", CN)
-        res = self.state.client.run_koji_command(
-            "add-host", CN, *arches,
+        (retcode, stdout, _) = self.state.client.run_koji_command(
+            ["add-host", CN] + list(arches),
         )
-        if 'is already in the database' in res.stdout:
+        if 'is already in the database' in stdout:
             return
-        res.check_returncode()
+        if retcode != 0:
+            raise RuntimeError("Error running command")
 
     def ensure_user(self, CN):
         self.logger.debug("Ensuring koji user %s exists", CN)
-        res = self.state.client.run_koji_command(
-            "add-user", CN,
+        (retcode, _, stderr) = self.state.client.run_koji_command(
+            ["add-user", CN]
         )
-        if 'user already exists' in res.stderr:
+        if 'user already exists' in stderr:
             return
-        res.check_returncode()
+        if retcode != 0:
+            raise RuntimeError("Error running command")
 
     def ensure_permission(self, CN, perm):
         self.logger.debug("Ensuring koji user %s has perm %s", CN, perm)
-        res = self.state.client.run_koji_command(
-            "grant-permission", perm, CN,
+        (retcode, _, stderr) = self.state.client.run_koji_command(
+            ["grant-permission", perm, CN]
         )
-        if 'already has permission' in res.stderr:
+        if 'already has permission' in stderr:
             return
-        res.check_returncode()
+        if retcode != 0:
+            raise RuntimeError("Error running command")

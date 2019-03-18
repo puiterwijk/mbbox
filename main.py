@@ -36,10 +36,13 @@ def main():
     state.oc_test()
 
     if len(extra) > 0 and extra[0] == 'koji':
-        out = state.client.run_koji_command(capture=False, *extra[1:])
-        print("Retcode: %s" % out.returncode)
-        print("Stdout: %s" % out.stdout)
-        print("Stderr: %s" % out.stderr)
+        (retcode, stdout, stderr) = state.client.run_koji_command(
+            cmd=extra[1:],
+            capture=False,
+        )
+        print("Retcode: %s" % retcode)
+        print("Stdout: %s" % stdout)
+        print("Stderr: %s" % stderr)
         return
 
     state.build_all()

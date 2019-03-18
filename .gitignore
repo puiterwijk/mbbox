@@ -1,2 +1,3 @@
 state/
 mbox/__pycache__
+*.pyc

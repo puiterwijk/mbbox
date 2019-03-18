@@ -12,18 +12,17 @@ class Client(BaseComponent):
             "app=client",
         )
 
-    def run_command(self, *cmd, capture=False):
+    def run_command(self, cmd, capture=False):
         return self.state.oc_exec(
             self.client_pod_name,
-            *cmd,
             capture=capture,
+            *cmd
         )
 
-    def run_koji_command(self, *cmd, capture=False):
+    def run_koji_command(self, cmd, capture=False):
         return self.run_command(
-            "koji", "--config=/etc/client/koji.conf",
-            "--profile=koji",
-            *cmd,
+            ["koji", "--config=/etc/client/koji.conf",
+             "--profile=koji"] + cmd,
             capture=capture,
         )
 

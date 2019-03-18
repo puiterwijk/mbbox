@@ -73,15 +73,34 @@ class State(object):
     def capture_oc_output(self):
         return not self._print_oc_output
 
+    def call_oc(self, cmd, capture=False, check=True, input=None):
+        cmd = ['oc', '-n', self.project_name] + cmd
+
+        proc = subprocess.Popen(
+            cmd,
+            stdin=None if input is None else subprocess.PIPE,
+            shell=False,
+            universal_newlines=True,
+            stderr=None,
+            stdout=subprocess.PIPE if capture else None,
+        )
+
+        stdout, stderr = proc.communicate(input.encode('utf-8'))
+
+        if check and proc.returncode != 0:
+            raise RuntimeError("Command %s failed (%d): %s" %
+                               (cmd, proc.returncode, stderr))
+
+        return (proc.returncode, stdout, stderr)
+
     def oc_test(self):
-        subprocess.run(["oc", "whoami"], capture_output=True, check=True)
+        self.call_oc(["whoami"])
 
     def oc_apply(self, obj):
-        subprocess.run(
-            ["oc", "apply", "-f", "-", "-n", self.project_name],
+        self.call_oc(
+            ["apply", "-f", "-"],
             input=obj,
-            encoding='utf-8',
-            check=True)
+        )
 
     @staticmethod
     def _objname(objtype, objname):
@@ -89,12 +108,13 @@ class State(object):
 
     def oc_object_exists(self, objtype, objname):
         self.logger.debug("Checking if %s/%s exists", objtype, objname)
-        res = subprocess.run(
-            ["oc", "get", "-n", self.project_name,
-             self._objname(objtype, objname)],
-            capture_output=True)
-        self.logger.debug("Exists: %s", res.returncode == 0)
-        return res.returncode == 0
+        (retcode, _, _) = self.call_oc(
+            ["get", self._objname(objtype, objname)],
+            capture=True,
+            check=False,
+        )
+        self.logger.debug("Exists: %s", retcode == 0)
+        return retcode == 0
 
     def oc_create_secret_file(self, objname, files):
         """ Create a secret from a set of files.
@@ -102,41 +122,27 @@ class State(object):
         files: dict of key -> filename to upload.
         """
         self.logger.debug("Creating secret file %s", objname)
-        cmd = ["oc", "-n", self.project_name,
-               "create", "secret", "generic", objname]
+        cmd = ["create", "secret", "generic", objname]
         for file in files:
             cmd.append("--from-file=%s=%s" % (file, files[file]))
-        subprocess.run(
-            cmd,
-            encoding='utf-8',
-            check=True)
+        self.call_oc(cmd)
 
     def oc_create_secret_tls(self, objname, cert, key):
         self.logger.debug("Creating TLS secret %s", objname)
-        cmd = ["oc", "-n", self.project_name,
-               "create", "secret", "tls", objname,
+        cmd = ["create", "secret", "tls", objname,
                "--cert=%s" % cert,
                "--key=%s" % key]
-        subprocess.run(
-            cmd,
-            encoding='utf-8',
-            check=True)
+        self.call_oc(cmd)
 
     def oc_get_last_build_num(self, bcname):
         self.logger.debug("Getting last build for buildconfig %s", bcname)
         cmd = [
-            "oc", "-n", self.project_name,
             "get", self._objname("buildconfig", bcname),
             "-o=custom-columns=LATEST:status.lastVersion",
             "--no-headers=true",
         ]
-        res = subprocess.run(
-            cmd,
-            encoding='utf-8',
-            check=True,
-            capture_output=True,
-        )
-        return res.stdout.strip()
+        (_, stdout, _) = self.call_oc(cmd)
+        return stdout.strip()
 
     def oc_ensure_build(self, buildname, follow=True):
         self.logger.debug("Ensuring build for %s", buildname)
@@ -146,31 +152,22 @@ class State(object):
             return
         self.logger.debug("Starting build for %s", buildname)
         cmd = [
-            "oc", "-n", self.project_name,
             "start-build", buildname,
         ]
         if follow:
             cmd += ['--follow=true']
-        return subprocess.run(
-            cmd,
-            encoding='utf-8',
-            check=True,
-            capture_output=self.capture_oc_output,
-        )
+        self.call_oc(cmd, capture=self.capture_oc_output)
 
     def oc_wait_for_deploy(self, deployname):
         self.logger.debug("Waiting for deploy of %s", deployname)
         # oc rollout status dc/koji-hub -n mbox --watch
         cmd = [
-            "oc", "-n", self.project_name,
             "rollout", "status", self._objname("deploymentconfig", deployname),
             "--watch=true",
         ]
-        subprocess.run(
+        self.call_oc(
             cmd,
-            encoding='utf-8',
-            check=True,
-            capture_output=self.capture_oc_output,
+            capture=self.capture_oc_output,
         )
         self.logger.debug("Waiting 5 seconds for deployment to be done")
         time.sleep(5)
@@ -179,20 +176,15 @@ class State(object):
         self.logger.debug("Getting object type %s filters %s",
                           objtype, filters)
         cmd = [
-            "oc", "-n", self.project_name,
             "get", objtype, "-o", "name",
             "--show-all=false",
         ]
         for filter in filters:
             cmd.extend(["-l", filter])
-        return subprocess.run(
-            cmd,
-            encoding='utf-8',
-            check=True,
-            capture_output=True,
-        ).stdout.strip().split("\n")[-1].strip()
+        (_, stdout, _) = self.call_oc(cmd)
+        return stdout.strip().split("\n")[-1].strip()
 
-    def oc_exec(self, podname, *command, capture=False):
+    def oc_exec(self, podname, capture=False, *command):
         if podname.startswith('pod/'):
             podname = podname[len('pod/'):]
         if isinstance(command, tuple):
@@ -201,21 +193,19 @@ class State(object):
             command = " ".join(command)
         self.logger.debug("Running command in pod %s: %s", podname, command)
         cmd = [
-            "oc", "-n", self.project_name,
             "exec", podname, "--",
             "/bin/bash", "-c",
             command,
         ]
-        res = subprocess.run(
+        (retcode, stdout, stderr) = self.call_oc(
             cmd,
-            capture_output=not capture,
-            encoding='utf-8',
+            capture=True,
             check=False,
         )
-        self.logger.debug("Retcode: %d", res.returncode)
-        self.logger.debug("Stdout: %s", res.stdout)
-        self.logger.debug("Stderr: %s", res.stderr)
-        return res
+        self.logger.debug("Retcode: %d", retcode)
+        self.logger.debug("Stdout: %s", stdout)
+        self.logger.debug("Stderr: %s", stderr)
+        return (retcode, stdout, stderr)
 
     @property
     def jinjaenv(self):

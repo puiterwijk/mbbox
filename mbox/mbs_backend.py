@@ -12,10 +12,10 @@ class MBSBackend(BaseComponent):
             "app=mbs-backend",
         )
 
-    def run_command(self, *cmd):
+    def run_command(self, cmd):
         return self.state.oc_exec(
             self.backend_pod_name,
-            *cmd,
+            *cmd
         )
 
     def create_build(self):
@@ -43,12 +43,12 @@ class MBSBackend(BaseComponent):
         )
         self.state.oc_wait_for_deploy("mbs-backend")
         self.run_command(
-            "/usr/bin/mbs-manager", "upgradedb",
+            ["/usr/bin/mbs-manager", "upgradedb"]
         )
         for module in ("f29",):
             self.logger.info("Importing module %s", module)
             self.run_command(
-                "/usr/bin/mbs-manager",
-                "import_module",
-                "/etc/module-build-service/default_module_%s.yml" % module,
+                ["/usr/bin/mbs-manager",
+                 "import_module",
+                 "/etc/module-build-service/default_module_%s.yml" % module]
             )

@@ -1,5 +1,3 @@
-import subprocess
-
 from .base import BaseComponent
 
 
@@ -38,21 +36,15 @@ class Database(BaseComponent):
             raise ValueError("Invalid built-in db type")
 
         cmd = [
-            "oc", "process",
-            "-n", self.state.project_name,
+            "process",
             "openshift//postgresql-%s"
             % self.state.config.database['built_in'],
             "POSTGRESQL_USER=%s" % self.username,
             "POSTGRESQL_PASSWORD=%s" % self.password,
             "POSTGRESQL_DATABASE=mbox",
         ]
-        objs = subprocess.run(
-            cmd,
-            capture_output=True,
-            encoding='utf-8',
-            check=True,
-        )
-        self.state.oc_apply(objs.stdout)
+        (_, stdout, _) = self.state.call_oc(cmd, capture=True)
+        self.state.oc_apply(stdout)
 
     def run_query(self, database_name, query):
         self.logger.debug("Running database query on %s: %s",
@@ -64,14 +56,15 @@ class Database(BaseComponent):
 
     def ensure_database_exists(self, database_name):
         self.logger.debug("Creating database %s", database_name)
-        output = self.run_query(
+        (retcode, _, stderr) = self.run_query(
             "mbox",
             "CREATE DATABASE %s OWNER mboxdb" % database_name,
         )
-        if "already exists" in output.stderr:
+        if "already exists" in stderr:
             self.logger.debug("Database already existed")
             return False
-        self.logger.debug("Stderr: %s" % output.stderr)
-        output.check_returncode()
+        self.logger.debug("Stderr: %s" % stderr)
+        if retcode != 0:
+            raise RuntimeError("Error during running sql query")
         self.logger.info("Database %s created", database_name)
         return True
