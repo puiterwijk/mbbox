@@ -68,6 +68,7 @@ data:
     </Directory>
 
     Alias /pkgs /mnt/koji
+    Alias /kojifiles /mnt/koji
     <Directory /mnt/koji>
       Require all granted
     </Directory>
